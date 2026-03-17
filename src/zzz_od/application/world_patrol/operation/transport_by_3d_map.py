@@ -53,6 +53,8 @@ class TransportBy3dMap(ZOperation):
         else:
             return self.round_retry(status='未发现地图', wait=1)
 
+    @node_from(from_name='选择子区域', success=False)  # 区域有子区域但找不到 说明选择区域错误
+    @node_from(from_name='关闭区域信息弹窗')  # 搜索失败 → 关闭弹窗 → 重新选区域
     @node_from(from_name='初始回到大世界', status='3D地图')
     @node_from(from_name='打开地图')
     @operation_node(name='选择区域', node_max_retry_times=20)
@@ -88,26 +90,27 @@ class TransportBy3dMap(ZOperation):
         start_point = area.center
         end_point = start_point + Point(0, 400 * (-1 if is_target_after else 1))
         self.ctx.controller.drag_to(start=start_point, end=end_point)
-        return self.round_retry()
+        # 等待滚动动画稳定 避免动画中OCR识别到目标但点击位置偏移
+        return self.round_retry(wait=1)
 
     @node_from(from_name='选择区域')
-    @operation_node(name='选择子区域', node_max_retry_times=6)
-    def choose_sub_area(self) -> OperationRoundResult:
+    @operation_node(name='展开子区域列表')
+    def expand_sub_area(self) -> OperationRoundResult:
         if self.target_area.parent_area is None:
             return self.round_success(status='无需选择')
 
-        self.round_by_click_area('3D地图', '按钮-当前子区域',
-                                 success_wait=1)
+        return self.round_by_click_area('3D地图', '按钮-当前子区域')
 
-        self.screenshot()
+    @node_from(from_name='展开子区域列表')
+    @operation_node(name='选择子区域', node_max_retry_times=6)
+    def choose_sub_area(self) -> OperationRoundResult:
         return self.round_by_ocr_and_click(
-            screen=self.last_screenshot,
-            target_cn=self.target_area.area_name,
-            area=self.ctx.screen_loader.get_area('3D地图', '区域-子区域列表'),
-            success_wait=1,
+            self.last_screenshot, self.target_area.area_name,
+            self.ctx.screen_loader.get_area('3D地图', '区域-子区域列表'),
             retry_wait=1,
         )
 
+    @node_from(from_name='展开子区域列表', status='无需选择')
     @node_from(from_name='选择子区域')
     @operation_node(name='打开筛选')
     def open_filter(self) -> OperationRoundResult:
@@ -127,10 +130,8 @@ class TransportBy3dMap(ZOperation):
             target_word = '传送'
 
         return self.round_by_ocr_and_click(
-            screen=self.last_screenshot,
-            target_cn=target_word,
-            area=self.ctx.screen_loader.get_area('3D地图', '区域-筛选选项'),
-            success_wait=1,
+            self.last_screenshot, target_word,
+            self.ctx.screen_loader.get_area('3D地图', '区域-筛选选项'),
             retry_wait=1,
         )
 
@@ -182,7 +183,7 @@ class TransportBy3dMap(ZOperation):
         return self.round_success()
 
     @node_from(from_name='初始化传送点搜索')
-    @operation_node(name='搜索传送点循环', node_max_retry_times=20)
+    @operation_node(name='搜索传送点循环', node_max_retry_times=8)
     def search_tp_icon_loop(self) -> OperationRoundResult:
         """
         传送点搜索主循环：
@@ -334,6 +335,13 @@ class TransportBy3dMap(ZOperation):
         log.debug(f'执行随机拖动：{direction}')
         self.ctx.controller.drag_to(start=start_point, end=end_point)
 
+    @node_from(from_name='搜索传送点循环', success=False)  # 搜索失败后关闭残留弹窗
+    @operation_node(name='关闭区域信息弹窗')
+    def close_area_info_popup(self) -> OperationRoundResult:
+        """搜索失败后关闭残留的传送点信息弹窗"""
+        self.round_by_find_and_click_area(self.last_screenshot, '3D地图', '按钮-区域信息-关闭')
+        return self.round_success()
+
     @node_from(from_name='搜索传送点循环')
     @operation_node(name='点击前往')
     def click_go(self) -> OperationRoundResult:
@@ -341,14 +349,14 @@ class TransportBy3dMap(ZOperation):
             self.last_screenshot,
             '3D地图', '按钮-前往',
             until_not_find_all=[('3D地图', '按钮-前往')],
-            success_wait=1,
             retry_wait=1,
         )
 
     @node_from(from_name='点击前往')
     @operation_node(name='等待画面加载')
     def back_at_last(self) -> OperationRoundResult:
-        op = BackToNormalWorld(self.ctx)
+        # allow_battle=True: 传送落地即进入战斗时直接返回，由调用方(如锄大地)处理战斗
+        op = BackToNormalWorld(self.ctx, allow_battle=True)
         return self.round_by_op_result(op.execute())
 
 def __debug():
