@@ -6,11 +6,12 @@ on:
   push:
     branches: [main]
 
-env:
-  TZ: Asia/Shanghai
-
 jobs:
+  set-timestamp:
+    uses: ./.github/workflows/common-set-timestamp.yml
+
   build-running-resources:
+    needs: set-timestamp
     runs-on: windows-latest
     permissions:
       contents: write
@@ -52,34 +53,44 @@ jobs:
         env:
           PYTHONPATH: src
 
-      - name: Set timestamp
+      - name: Check for changes
+        id: changes
         shell: pwsh
-        run: echo "BUILD_TIMESTAMP=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" >> $env:GITHUB_ENV
+        run: |
+          $trackedChanges = @(git diff --name-only --ignore-cr-at-eol -- config/auto_battle/ assets/text/output/ deploy/module_manifest.py)
+          $untrackedChanges = @(git ls-files --others --exclude-standard -- config/auto_battle/ assets/text/output/ deploy/module_manifest.py)
+          $changes = @($trackedChanges + $untrackedChanges) | Where-Object { $_ }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "changed=$(([bool]$changes).ToString().ToLowerInvariant())"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "files<<EOF"
+          $changes | Add-Content -Path $env:GITHUB_OUTPUT
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "EOF"
 
       - name: Push changes
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && steps.changes.outputs.changed == 'true'
         uses: actions-js/push@v1.5
         with:
           rebase: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
           branch: ${{ github.head_ref || github.ref_name }}
           message: |
-            ci: 自动构建运行资源 ${{ env.BUILD_TIMESTAMP }}
+            ci: 自动构建运行资源 ${{ needs.set-timestamp.outputs.build_timestamp }}
 
             [skip ci]
 
       - name: Check build artifacts (fork PR)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         shell: pwsh
+        env:
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          CHANGED_FILES: ${{ steps.changes.outputs.files }}
         run: |
-          $changes = git status --porcelain config/auto_battle/ assets/text/output/ deploy/module_manifest.py
-          if ($changes) {
+          if ($env:CHANGED -eq 'true') {
             Write-Host "::error::构建产物未提交，请在本地运行以下命令后提交："
             Write-Host "::error::  uv run python src/one_dragon/devtools/compile_po.py"
             Write-Host "::error::  uv run python src/zzz_od/auto_battle/build_utils.py"
             Write-Host "::error::  uv run python deploy/generate_module_manifest.py"
             Write-Host "变更文件："
-            Write-Host $changes
+            Write-Host $env:CHANGED_FILES
             exit 1
           }
           Write-Host "构建产物已是最新"

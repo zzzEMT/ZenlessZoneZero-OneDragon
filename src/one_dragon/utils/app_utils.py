@@ -1,8 +1,12 @@
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 from one_dragon.utils import os_utils
+
+ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 
 
 def start_one_dragon(restart: bool) -> None:
@@ -29,12 +33,19 @@ def get_exe_version(exe_path: str) -> str:
         str: 版本号，失败返回空字符串
     """
     try:
+        env = os.environ.copy()
+        # 版本查询无需提权，也不能复用父启动器的 PyInstaller 临时环境
+        env.update({
+            '__COMPAT_LAYER': 'RunAsInvoker',
+            'PYINSTALLER_RESET_ENVIRONMENT': '1',
+        })
         result = subprocess.run(
-            f'"{exe_path}" --version',
+            [exe_path, '--version'],
             capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            env=env,
         )
-        version_output = result.stdout.strip()
+        version_output = ANSI_ESCAPE_PATTERN.sub('', result.stdout).strip()
         return version_output.rsplit(maxsplit=1)[-1] if version_output else ""
     except Exception:
         return ""

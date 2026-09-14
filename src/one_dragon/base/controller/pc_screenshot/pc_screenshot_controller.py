@@ -1,10 +1,10 @@
+import cv2
 from cv2.typing import MatLike
 
 from one_dragon.base.controller.pc_game_window import PcGameWindow
 from one_dragon.base.controller.pc_screenshot.bitblt_screencapper import (
     BitBltScreencapper,
 )
-from one_dragon.base.controller.pc_screenshot.mss_screencapper import MssScreencapper
 from one_dragon.base.controller.pc_screenshot.pil_screencapper import PilScreencapper
 from one_dragon.base.controller.pc_screenshot.print_window_screencapper import (
     PrintWindowScreencapper,
@@ -31,16 +31,16 @@ class PcScreenshotController:
         self.strategies: dict[str, ScreencapperBase] = {
             ScreenshotMethodEnum.PRINT_WINDOW.value.value: PrintWindowScreencapper(game_win, standard_width, standard_height),
             ScreenshotMethodEnum.BITBLT.value.value: BitBltScreencapper(game_win, standard_width, standard_height),
-            ScreenshotMethodEnum.MSS.value.value: MssScreencapper(game_win, standard_width, standard_height),
             ScreenshotMethodEnum.PIL.value.value: PilScreencapper(game_win, standard_width, standard_height),
         }
         self.active_strategy_name: str | None = None
 
-    def get_screenshot(self, independent: bool = False) -> MatLike | None:
+    def get_screenshot(self, independent: bool = False, resize: bool = True) -> MatLike | None:
         """根据初始化的方法获取截图
 
         Args:
             independent: 是否独立截图（不进行初始化，使用临时的截图器）
+            resize: 是否缩放到标准分辨率
 
         Returns:
             截图数组，失败返回 None
@@ -50,7 +50,7 @@ class PcScreenshotController:
             return None
 
         rect: Rect = self.game_win.win_rect
-        if rect is None:
+        if rect is None or rect.width <= 0 or rect.height <= 0:
             return None
 
         if independent:
@@ -72,6 +72,10 @@ class PcScreenshotController:
 
                 if not independent and self.active_strategy_name != method_name:
                     self.active_strategy_name = method_name
+
+                if resize and self.game_win.is_win_scale:
+                    result = cv2.resize(result, (self.standard_width, self.standard_height))
+
                 return result
 
             except Exception:
@@ -130,7 +134,6 @@ class PcScreenshotController:
         default_priority = [
             ScreenshotMethodEnum.PRINT_WINDOW.value.value,
             ScreenshotMethodEnum.BITBLT.value.value,
-            ScreenshotMethodEnum.MSS.value.value,
             ScreenshotMethodEnum.PIL.value.value,
         ]
 

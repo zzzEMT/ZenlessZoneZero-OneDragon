@@ -6,13 +6,6 @@ from one_dragon.base.controller.pc_button.ds4_button_controller import Ds4Button
 from one_dragon.base.controller.pc_button.xbox_button_controller import XboxButtonEnum
 
 
-class ControlMethodEnum(Enum):
-
-    KEYBOARD = ConfigItem('键鼠', 'keyboard')
-    XBOX = ConfigItem('Xbox', 'xbox')
-    DS4 = ConfigItem('DS4', 'ds4')
-
-
 class GamepadTypeEnum(Enum):
 
     XBOX = ConfigItem('Xbox', 'xbox')
@@ -41,6 +34,7 @@ class GameKeyAction(Enum):
     DODGE = ConfigItem('闪避', 'dodge')
     SWITCH_NEXT = ConfigItem('角色切换-下一个', 'switch_next')
     SWITCH_PREV = ConfigItem('角色切换-上一个', 'switch_prev')
+    SWITCH_BACKUP = ConfigItem('切换后援', 'switch_backup')
     SPECIAL_ATTACK = ConfigItem('特殊攻击', 'special_attack')
     ULTIMATE = ConfigItem('终结技', 'ultimate')
     CHAIN_LEFT = ConfigItem('连携技-左', 'chain_left')
@@ -61,6 +55,7 @@ _KEY_DEFAULTS: dict[str, dict[str, str]] = {
         'dodge': 'shift',
         'switch_next': 'space',
         'switch_prev': 'c',
+        'switch_backup': 'r',
         'special_attack': 'e',
         'ultimate': 'q',
         'chain_left': 'q',
@@ -78,6 +73,7 @@ _KEY_DEFAULTS: dict[str, dict[str, str]] = {
         'dodge': XboxButtonEnum.A.value.value,
         'switch_next': XboxButtonEnum.RB.value.value,
         'switch_prev': XboxButtonEnum.LB.value.value,
+        'switch_backup': XboxButtonEnum.B.value.value,
         'special_attack': XboxButtonEnum.Y.value.value,
         'ultimate': XboxButtonEnum.RT.value.value,
         'chain_left': XboxButtonEnum.LB.value.value,
@@ -95,6 +91,7 @@ _KEY_DEFAULTS: dict[str, dict[str, str]] = {
         'dodge': Ds4ButtonEnum.CROSS.value.value,
         'switch_next': Ds4ButtonEnum.R1.value.value,
         'switch_prev': Ds4ButtonEnum.L1.value.value,
+        'switch_backup': Ds4ButtonEnum.CIRCLE.value.value,
         'special_attack': Ds4ButtonEnum.TRIANGLE.value.value,
         'ultimate': Ds4ButtonEnum.R2.value.value,
         'chain_left': Ds4ButtonEnum.L1.value.value,
@@ -179,17 +176,7 @@ class GameConfig(BasicGameConfig):
     def __init__(self, instance_idx: int):
         BasicGameConfig.__init__(self, instance_idx)
         # TODO 迁移旧配置 2026-9 删除
-        self._migrate_legacy_keys()
         self._migrate_legacy_gamepad_keys()
-
-    def _migrate_legacy_keys(self) -> None:
-        """迁移旧键名到新键名。"""
-        _RENAMES = {'gamepad_type': 'control_method'}
-        for old_key, new_key in _RENAMES.items():
-            old_val = self.get(old_key)
-            if old_val is not None and self.get(new_key) is None:
-                self.update(new_key, old_val)
-                self.update(old_key, None)
 
     def _migrate_legacy_gamepad_keys(self) -> None:
         """初始化时一次性迁移所有旧数字格式的手柄按键配置。"""
@@ -204,14 +191,6 @@ class GameConfig(BasicGameConfig):
                 )
                 if migrated != value:
                     self.update(prop, migrated)
-
-    @property
-    def control_method(self) -> str:
-        return self.get('control_method', ControlMethodEnum.KEYBOARD.value.value)
-
-    @control_method.setter
-    def control_method(self, new_value: str) -> None:
-        self.update('control_method', new_value)
 
     @property
     def xbox_key_press_time(self) -> float:
@@ -258,7 +237,7 @@ class GameConfig(BasicGameConfig):
         """获取指定控制方式的所有按键映射。
 
         Args:
-            control_method: ControlMethodEnum 的值，如 'keyboard' / 'xbox' / 'ds4'。
+            control_method: 控制器类型，如 'keyboard' / 'xbox' / 'ds4'。
 
         Returns:
             {action_name: key_value}，如 {'dodge': 'shift', 'interact': 'f', ...}
@@ -303,7 +282,7 @@ class GameConfig(BasicGameConfig):
     @property
     def turn_dx(self) -> float:
         """转向时 每度所需要移动的像素距离。"""
-        return self.get('turn_dx', 0)
+        return self.get('turn_dx', -5.5)  # 游戏内镜头灵敏度（X轴）为默认值3时的经验兜底值
 
     @turn_dx.setter
     def turn_dx(self, new_value: float):

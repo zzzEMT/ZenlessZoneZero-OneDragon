@@ -21,6 +21,8 @@ from zzz_od.operation.wait_normal_world import WaitNormalWorld
 
 class LifeOnLineApp(ZApplication):
 
+    """真·拿命验收:第二章间章的 HDD 战斗委托,可重复挑战;主要用于推进/跳过游戏时间(过夜)。进入战斗、单次很快(默认按次数重复)。"""
+
     STATUS_TIMES_FINISHED: ClassVar[str] = '完成指定次数'
     STATUS_CONTINUE: ClassVar[str] = '继续'
     STATUS_CONTINUE_OVER_NIGHT: ClassVar[str] = '过夜后继续'
@@ -113,8 +115,7 @@ class LifeOnLineApp(ZApplication):
 
         # 有选项就点选项
         area = self.ctx.screen_loader.get_area('真拿命验收', '对话选项')
-        part = cv2_utils.crop_image_only(self.last_screenshot, area.rect)
-        ocr_result_map = self.ctx.ocr.run_ocr(part)
+        ocr_result_map = self.ctx.ocr.crop_and_run_ocr(self.last_screenshot, area.rect)
         for ocr_result, mrl in ocr_result_map.items():
             to_click = mrl.max.center + area.left_top
             self.ctx.controller.click(to_click)

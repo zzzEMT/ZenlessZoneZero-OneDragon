@@ -68,8 +68,8 @@ class BackToNormalWorld(ZOperation):
         if mini_map.play_mask_found:
             return self.round_success(status='发现地图')
 
-        # 大部分画面都有街区可以直接返回
-        result = self.round_by_find_and_click_area(self.last_screenshot, '画面-通用', '左上角-街区')
+        # 大部分画面都有街区或勘域可以直接返回，“区域”通过 0.5 LCS 匹配“街区”的“区”或“勘域”的“域”
+        result = self.round_by_find_and_click_area(self.last_screenshot, '画面-通用', '左上角-区域')
         if result.is_success:
             return self.round_retry(result.status, wait=1)
 
@@ -91,7 +91,7 @@ class BackToNormalWorld(ZOperation):
             return self.round_success('脱离卡死', wait=1)
 
         # 通用返回按钮（识别点击型）
-        # 需要在"完成"前面，某些插件场景可能会识别到'返回'和"完成"同时存在
+        # 需要在"完成"前面，否则在丽都城募app（若购买了大月卡）会误点击“已完成购买” issue #2005
         result = self.round_by_find_and_click_area(self.last_screenshot, '画面-通用', '返回')
         if result.is_success:
             return self.round_retry(result.status, wait=1)
@@ -102,8 +102,6 @@ class BackToNormalWorld(ZOperation):
             return self.round_retry(result.status, wait=1)
 
         # 通用完成按钮
-        # 某些插件场景"合成"可能会被误匹配为"完成"
-        # 需要在'返回'后面，购买大月卡后返回大世界一直点击“已完成购买” issue #2005
         result = self.round_by_find_and_click_area(self.last_screenshot, '画面-通用', '完成')
         if result.is_success:
             return self.round_retry(result.status, wait=1)
@@ -198,8 +196,7 @@ class BackToNormalWorld(ZOperation):
         处理代理人好感度对话
         """
         area = self.ctx.screen_loader.get_area('大世界', '好感度选项')
-        part = cv2_utils.crop_image_only(screen, area.rect)
-        ocr_result_map = self.ctx.ocr.run_ocr(part)
+        ocr_result_map = self.ctx.ocr.crop_and_run_ocr(screen, area.rect)
         if len(ocr_result_map) > 0:
             self.last_dialog_idx = 1  # 每次都换一个选项 防止错误识别点击了不是选项的地方
             if self.last_dialog_idx >= len(ocr_result_map):  # 下标过大 从0开始
@@ -242,15 +239,12 @@ class BackToNormalWorld(ZOperation):
         return None
 
 
-def _debug():
+def _debug() -> None:
     ctx = ZContext()
     ctx.init()
+    ctx.run_context.start_running()
     op = BackToNormalWorld(ctx)
-    from one_dragon.utils import debug_utils
-    screen = debug_utils.get_debug_image('508500962-c6b83e60-fc00-49ce-83d0-17e0e49a5aa1')
-    import cv2
-    op.last_screenshot = cv2.resize(screen, (1920, 1080))
-    print(op.check_screen_and_run().status)
+    op.execute()
 
 
 if __name__ == '__main__':

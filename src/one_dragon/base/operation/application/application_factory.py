@@ -1,11 +1,11 @@
-from abc import ABC
+from types import ModuleType
 
 from one_dragon.base.operation.application.application_config import ApplicationConfig
 from one_dragon.base.operation.application_base import Application
 from one_dragon.base.operation.application_run_record import AppRunRecord
 
 
-class ApplicationFactory(ABC):
+class ApplicationFactory:
     """
     应用工厂抽象基类。
 
@@ -18,26 +18,46 @@ class ApplicationFactory(ABC):
         - const 文件中可定义 `DEFAULT_GROUP = False` 表示不属于默认组
     """
 
-    def __init__(
-        self,
-        app_id: str,
-        app_name: str,
-        default_group: bool = True,
-        need_notify: bool = False,
-    ):
+    # app_const 模块必须定义的字段
+    REQUIRED_CONST_FIELDS: tuple[str, ...] = (
+        'APP_ID',
+        'APP_NAME',
+        'DEFAULT_GROUP',
+        'NEED_NOTIFY',
+    )
+
+    # 可选的插件元数据字段（仅插件需要）
+    OPTIONAL_PLUGIN_FIELDS: tuple[str, ...] = (
+        'PLUGIN_AUTHOR',
+        'PLUGIN_HOMEPAGE',
+        'PLUGIN_VERSION',
+        'PLUGIN_DESCRIPTION',
+    )
+
+    def __init__(self, app_const: ModuleType):
         """
         初始化应用工厂。
 
+        从 app_const 模块中自动解析以下字段:
+            - APP_ID: 应用唯一标识符
+            - APP_NAME: 显示用的应用名称
+            - DEFAULT_GROUP: 是否属于默认应用组
+            - NEED_NOTIFY: 应用是否需要通知
+            - PRIORITY: 默认组排序优先级（可选）
+
         Args:
-            app_id: 应用唯一标识符，用于区分不同的应用类型
-            app_name: 显示用的应用名称
-            default_group: 是否属于默认应用组，默认为 True
-            need_notify: 应用是否需要通知
+            app_const: 应用常量模块
         """
-        self.app_id: str = app_id
-        self.app_name: str = app_name
-        self.need_notify: bool = need_notify
-        self.default_group: bool = default_group
+        self.app_id: str = app_const.APP_ID
+        self.app_name: str = app_const.APP_NAME
+        self.default_group: bool = app_const.DEFAULT_GROUP
+        self.need_notify: bool = app_const.NEED_NOTIFY
+        priority = getattr(app_const, 'PRIORITY', None)
+        if priority is not None and (
+            not isinstance(priority, int) or isinstance(priority, bool)
+        ):
+            raise ValueError(f'应用 {self.app_id} 的 PRIORITY 必须为整数')
+        self.priority: int | None = priority
         self._config_cache: dict[str, ApplicationConfig] = {}
         self._run_record_cache: dict[str, AppRunRecord] = {}
 
@@ -139,3 +159,11 @@ class ApplicationFactory(ABC):
             self._run_record_cache[key] = record
 
         return record
+
+    def clear_cache(self) -> None:
+        """清理工厂缓存的配置和运行记录。
+
+        主要供 backend server 在应用运行前刷新 GUI 已保存到 YAML 的配置。
+        """
+        self._config_cache.clear()
+        self._run_record_cache.clear()

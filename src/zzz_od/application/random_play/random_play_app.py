@@ -4,16 +4,14 @@ from typing import ClassVar
 
 from cv2.typing import MatLike
 
+from one_dragon.base.config.config_item import get_config_item_from_enum
 from one_dragon.base.geometry.point import Point
 from one_dragon.base.matcher.match_result import MatchResult
 from one_dragon.base.operation.application import application_const
 from one_dragon.base.operation.operation_edge import node_from
 from one_dragon.base.operation.operation_node import operation_node
 from one_dragon.base.operation.operation_notify import NotifyTiming, node_notify
-from one_dragon.base.operation.operation_round_result import (
-    OperationRoundResult,
-    OperationRoundResultEnum,
-)
+from one_dragon.base.operation.operation_round_result import OperationRoundResult
 from one_dragon.utils import cv2_utils
 from one_dragon.utils.i18_utils import gt
 from one_dragon.utils.log_utils import log
@@ -21,15 +19,20 @@ from zzz_od.application.random_play import random_play_const
 from zzz_od.application.random_play.random_play_config import (
     RANDOM_AGENT_NAME,
     RandomPlayConfig,
+    RandomPlayTransportPoint,
 )
 from zzz_od.application.zzz_application import ZApplication
 from zzz_od.context.zzz_context import ZContext
 from zzz_od.game_data.agent import Agent, AgentEnum
 from zzz_od.operation.back_to_normal_world import BackToNormalWorld
 from zzz_od.operation.transport import Transport
+from zzz_od.operation.turning.turn_compensation import AngleTurnCompensator
+from zzz_od.operation.turning.turn_to_angle import turn_to_angle
 
 
 class RandomPlayApp(ZApplication):
+
+    """录像店营业:录像带店日常经营(宣传/营业/结算)。无消耗,产出菲林与丁尼。"""
 
     STATUS_ALL_VIDEO_CHOOSE: ClassVar[str] = '已选择全部录像带'
     STATUS_ALREADY_RUNNING: ClassVar[str] = '正在营业'
@@ -59,54 +62,93 @@ class RandomPlayApp(ZApplication):
         ]
         self._need_video_themes: list[str] = []
         self._current_idx: int = 0
+        self.turn_compensator: AngleTurnCompensator = AngleTurnCompensator(self.ctx.controller)
+        self.retried_transport: bool = False
 
+    @node_from(from_name='交互对话', success=False)
+    @node_from(from_name='等待经营画面加载', success=False)
     @operation_node(name='传送', is_start_node=True)
     def transport(self) -> OperationRoundResult:
-        op = Transport(self.ctx, '录像店', '柜台')
+        if self.previous_node.name in {'交互对话', '等待经营画面加载'}:
+            if self.retried_transport:
+                return self.round_fail(status='进入经营画面失败，重传送超限')
+            self.retried_transport = True
+
+        self.turn_compensator.clear_pending_sample()
+        item = get_config_item_from_enum(RandomPlayTransportPoint, self.config.transport_point)
+        op = Transport(self.ctx, item.area_name, item.tp_name)
         return self.round_by_op_result(op.execute())
 
     @node_from(from_name='传送')
-    @operation_node(name='移动交互')
+    @operation_node(name='移动交互', node_max_retry_times=10)
     def move_and_interact(self) -> OperationRoundResult:
         """
-        传送之后 往前移动一下 方便交互
+        录像店-柜台 / 布亚斯特城区-录像店营业点：转向正东后前移再交互
+        澄辉坪-录像店营业点：传送落点已正对入口，直接交互
         :return:
         """
-        self.ctx.controller.move_w(press=True, press_time=1, release=True)
-        time.sleep(1)
+        if self.config.transport_point in {
+            RandomPlayTransportPoint.POINT_1.value.value,
+            RandomPlayTransportPoint.POINT_3.value.value,
+        }:
+            result = turn_to_angle(self, target_angle=0, turn_status='转向正东')
+            if not result.is_success:
+                return result
+            self.ctx.controller.move_w(press=True, press_time=1, release=True)
 
+        time.sleep(1) # 防止交互无效 issue #2405 #2395 #2328
         self.ctx.controller.interact(press=True, press_time=0.2, release=True)
 
-        return self.round_success()
+        return self.round_success(wait=1)
 
     @node_from(from_name='移动交互')
-    @operation_node(name='等待经营画面加载')
-    def wait_run(self) -> OperationRoundResult:
-        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '昨日账本')
-        if result.is_success:
-            return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '按钮-关闭',
-                                                     retry_wait=1)
-        # 看看经营状况，识别到就点击一下，保证在"经营状况"分支
-        # 因为二次运行时，有极低概率"无人咨询"变成"咨询中"并被默认跳转
-        return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '经营状况',
-                                                 retry_wait=1)
+    @operation_node(name='交互对话', node_max_retry_times=10)
+    def handle_interaction_dialog(self) -> OperationRoundResult:
+        # 录像店-柜台交互后没有选项对话，直接交给经营画面加载节点
+        if self.config.transport_point == RandomPlayTransportPoint.POINT_1.value.value:
+            return self.round_success()
 
-    @node_from(from_name='等待经营画面加载')
-    @operation_node(name='识别营业状态')
-    def check_running(self) -> OperationRoundResult:
-        # 防止上一步跳过了昨日账本
+        # 录像店营业点交互后的选项对话框，优先选择“查看经营状况”
+        area = self.ctx.screen_loader.get_area('影像店营业', '右侧选项区域')
+        result = self.round_by_ocr_and_click(self.last_screenshot, '查看经营状况', area=area)
+        if result.is_success:
+            return self.round_success(status=result.status, wait=1)
+
+        # (布亚斯特城区-录像店营业点)需要推进一次对话框，右侧选项区域才会出现“查看经营状况”
+        result = self.round_by_click_area('影像店营业', '对话框标题')
+        if result.is_success:
+            return self.round_retry(status='继续对话', wait=1)
+        return result
+
+    @node_from(from_name='交互对话')
+    @operation_node(name='等待经营画面加载', node_max_retry_times=10)
+    def wait_run(self) -> OperationRoundResult:
+        # 每日首次。点完关闭按钮后回到本节点重判，防止昨日账本残影或未关闭
         result = self.round_by_find_area(self.last_screenshot, '影像店营业', '昨日账本')
         if result.is_success:
             self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '按钮-关闭')
             return self.round_retry(wait=1)
+        # 识别到"经营状况"就点击一下以保证在该分支。二次运行时，有极低概率"无人咨询"变成"咨询中"并被默认跳转
+        result = self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '经营状况')
+        if result.is_success:
+            return self.round_success(wait=1)
 
+        return self.round_retry(status='等待经营画面', wait=1)
+
+    @node_from(from_name='等待经营画面加载')
+    @operation_node(name='识别营业状态')
+    def check_running(self) -> OperationRoundResult:
         result = self.round_by_find_area(self.last_screenshot, '影像店营业', '正在营业')
         if result.is_success:
             return self.round_success(RandomPlayApp.STATUS_ALREADY_RUNNING)
-        else:
+        result = self.round_by_find_area(self.last_screenshot, '影像店营业', '开始营业')
+        if result.is_success:
             return self.round_success()
 
+        return self.round_retry(status='等待营业状态', wait=1)
+
     @node_from(from_name='识别营业状态', status=STATUS_ALREADY_RUNNING)
+    @node_from(from_name='点击宣传员入口', success=False)
     @operation_node(name='关闭经营页面')
     def close_business_page(self) -> OperationRoundResult:
         return self.round_by_find_and_click_area(self.last_screenshot, '影像店营业', '返回',
@@ -296,8 +338,7 @@ class RandomPlayApp(ZApplication):
         :return:
         """
         area = self.ctx.screen_loader.get_area('影像店营业', '主题筛选')
-        part = cv2_utils.crop_image_only(self.last_screenshot, area.rect)
-        ocr_results = self.ctx.ocr.run_ocr(part)
+        ocr_results = self.ctx.ocr.crop_and_run_ocr(self.last_screenshot, area.rect)
 
         target_list = [gt(i, 'game') for i in self._all_video_themes]
         current_target = self._need_video_themes[self._current_idx - 1]
@@ -392,6 +433,7 @@ class RandomPlayApp(ZApplication):
 def __debug():
     ctx = ZContext()
     ctx.init()
+    ctx.run_context.start_running()
     app = RandomPlayApp(ctx)
     app.execute()
 

@@ -1,11 +1,13 @@
 import json
 
+import cv2
+import numpy as np
+from cv2.typing import MatLike
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import FluentIcon, InfoBar, InfoBarPosition, PushButton, SettingCard
 
 from one_dragon.base.config.config_item import ConfigItem
 from one_dragon.base.controller.pc_clipboard import PcClipboard
-from one_dragon.base.operation.one_dragon_context import OneDragonContext
 from one_dragon.base.push.curl_generator import CurlGenerator
 from one_dragon.base.push.push_channel_config import (
     FieldTypeEnum,
@@ -28,6 +30,7 @@ from one_dragon_qt.widgets.setting_card.editable_combo_box_setting_card import (
 from one_dragon_qt.widgets.setting_card.expand_setting_card_group import (
     ExpandSettingCardGroup,
 )
+from one_dragon_qt.widgets.setting_card.help_card import HelpCard
 from one_dragon_qt.widgets.setting_card.key_value_setting_card import (
     KeyValueSettingCard,
 )
@@ -42,7 +45,7 @@ from one_dragon_qt.widgets.vertical_scroll_interface import VerticalScrollInterf
 
 class SettingPushInterface(VerticalScrollInterface):
 
-    def __init__(self, ctx: OneDragonContext, parent=None):
+    def __init__(self, ctx, parent=None):
 
         VerticalScrollInterface.__init__(
             self,
@@ -51,10 +54,16 @@ class SettingPushInterface(VerticalScrollInterface):
             nav_text_cn='通知设置',
             nav_icon=FluentIcon.MESSAGE
         )
-        self.ctx: OneDragonContext = ctx
+        self.ctx = ctx
 
     def get_content_widget(self) -> QWidget:
         content_widget = Column()
+
+        self.help_opt = HelpCard(
+            title='设置说明',
+            content='配置运行通知的推送方式或渠道，所有已配置的渠道都会启用',
+        )
+        content_widget.add_widget(self.help_opt)
 
         self.title_opt = TextSettingCard(
             icon=FluentIcon.MESSAGE,
@@ -106,6 +115,7 @@ class SettingPushInterface(VerticalScrollInterface):
 
         channel_group = ExpandSettingCardGroup(icon=FluentIcon.MESSAGE, title='通知方式')
         channel_group.addHeaderWidget(self.notification_method_opt.combo_box)
+        channel_group.setExpand(True)
         content_widget.add_widget(channel_group)
 
         # 预创建特殊卡片（稍后按渠道分配）
@@ -237,6 +247,7 @@ class SettingPushInterface(VerticalScrollInterface):
             ok, msg = self.ctx.push_service.push(
                 title=gt('测试推送通知'),
                 content=gt('这是一条测试消息'),
+                image=self._get_test_screenshot(),
                 channel_id=test_method,
             )
             if not ok:
@@ -255,6 +266,7 @@ class SettingPushInterface(VerticalScrollInterface):
             ok, msg = self.ctx.push_service.push(
                 title=gt('测试推送通知'),
                 content=gt('这是一条测试消息'),
+                image=self._get_test_screenshot(),
             )
             if not ok:
                 self._show_error_message(msg)
@@ -264,6 +276,29 @@ class SettingPushInterface(VerticalScrollInterface):
             self._show_error_message(str(e))
         except Exception as e:
             self._show_error_message(f"测试推送失败: {str(e)}")
+
+    def _get_test_screenshot(self) -> MatLike | None:
+        """生成通知测试用标准色相图。"""
+        if not self.ctx.push_service.push_config.send_image:
+            return None
+
+        size = 600
+        center = size // 2
+        y, x = np.ogrid[:size, :size]
+        dx = x - center
+        dy = center - y
+        radius = np.sqrt(dx * dx + dy * dy)
+        angle = (np.arctan2(dy, dx) + 2 * np.pi) % (2 * np.pi)
+
+        hsv = np.zeros((size, size, 3), dtype=np.uint8)
+        hsv[:, :, 0] = (angle * 180 / np.pi / 2).astype(np.uint8)
+        hsv[:, :, 1] = np.clip(radius / (size / 2) * 255, 0, 255).astype(np.uint8)
+        hsv[:, :, 2] = 255
+
+        image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+        image[radius > center] = (45, 45, 45)
+        cv2.circle(image, (center, center), center - 2, (255, 255, 255), 2)
+        return image
 
     def _on_email_service_selected(self, text):
         config = PushEmailServices.get_configs(str(text))

@@ -13,6 +13,8 @@ from zzz_od.operation.back_to_normal_world import BackToNormalWorld
 
 class EngagementRewardApp(ZApplication):
 
+    """活跃度奖励:领取快捷手册-日常的活跃度奖励。日刷新、无消耗。"""
+
     STATUS_NO_REWARD: ClassVar[str] = '无奖励可领取'
     STATUS_CLAIM_SUCCESS: ClassVar[str] = '日常奖励领取成功'
 
@@ -38,6 +40,7 @@ class EngagementRewardApp(ZApplication):
         return self.round_by_goto_screen(screen_name='快捷手册-日常')
 
     @node_from(from_name='快捷手册-日常')
+    @node_from(from_name='查看奖励结果', success=False)
     @operation_node(name='点击奖励')
     def click_reward(self) -> OperationRoundResult:
         return self.round_by_find_and_click_area(self.last_screenshot, '快捷手册', '今日最大活跃度', success_wait=1, retry_wait=1)
@@ -55,7 +58,7 @@ class EngagementRewardApp(ZApplication):
             if result.is_success:
                 return self.round_success('日常奖励已领取或活跃度未满')
 
-        return self.round_success('未找到确认按钮或奖励预览')
+        return self.round_fail('未找到确认按钮或奖励预览')
 
     @node_from(from_name='查看奖励结果')
     @node_notify(when=NotifyTiming.CURRENT_DONE, detail=True)
